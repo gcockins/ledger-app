@@ -1,0 +1,87 @@
+# Ledger — Setup Instructions
+## Get this running on your desktop in 5 minutes
+
+---
+
+## What You Need First
+- A computer (Mac or Windows)
+- Node.js installed (free) — download at https://nodejs.org
+  → Click the "LTS" version (the left button), install it like any normal program
+  → To check it worked: open Terminal (Mac) or Command Prompt (Windows) and type:
+      node --version
+    You should see something like: v20.0.0
+
+---
+
+## Step 1 — Copy the project folder
+Put the `ledger-app` folder somewhere you'll remember, like your Desktop or Documents.
+
+---
+
+## Step 2 — Open Terminal in that folder
+
+**On Mac:**
+1. Open Terminal (search "Terminal" in Spotlight)
+2. Type: cd Desktop/ledger-app  (or wherever you put it)
+3. Press Enter
+
+**On Windows:**
+1. Open the ledger-app folder in File Explorer
+2. Click the address bar at the top, type "cmd", press Enter
+3. A Command Prompt window opens in that folder
+
+---
+
+## Step 3 — Install (one time only)
+Type this and press Enter. Wait for it to finish (takes 1-2 minutes):
+
+    npm install
+
+You'll see a lot of text scroll by — that's normal. Wait until you see your cursor again.
+
+---
+
+## Step 4 — Run the app
+Every time you want to use it, type:
+
+    npm start
+
+Your browser will open automatically with the app at http://localhost:3000
+To stop it: press Ctrl+C in the terminal window.
+
+---
+
+## Your Data
+- All your financial data is saved in your browser's local storage
+- It stays on YOUR computer — never sent anywhere
+- Use the "Export Backup" button regularly to save a .json backup file
+- Use "Restore Backup" to bring data back from that file
+
+---
+
+## How to Export CSV from Major Banks
+
+**Chase:** Sign in → Accounts → Download Account Activity → CSV → pick date range
+**Bank of America:** Sign in → Accounts → Download → CSV
+**Wells Fargo:** Sign in → Activity → Download → CSV
+**Capital One:** Sign in → Accounts → Download Transactions → CSV
+**American Express:** Sign in → Statements → Download → CSV
+**Citi:** Sign in → Account Details → Download → CSV
+**Discover:** Sign in → Activity & Statements → Download → CSV
+
+Tip: Download 6 months at a time. Most banks let you pick a custom date range.
+
+---
+
+## Troubleshooting
+
+"npm is not recognized" — Node.js isn't installed. Go to nodejs.org and install it.
+"Port 3000 already in use" — another app is running on that port. Close it or type: npm start -- --port 3001
+App won't load — try refreshing the browser, or stop and restart with npm start
+
+---
+
+## Want to share it with someone else?
+Just zip up the ledger-app folder and send it.
+They install Node.js, run npm install, then npm start — same steps as above.
+
