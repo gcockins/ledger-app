@@ -1,0 +1,10 @@
+{
+  "files": {
+    "main.js": "/gcockins/ledger-app/static/js/main.a361e79a.js",
+    "index.html": "/gcockins/ledger-app/index.html",
+    "main.a361e79a.js.map": "/gcockins/ledger-app/static/js/main.a361e79a.js.map"
+  },
+  "entrypoints": [
+    "static/js/main.a361e79a.js"
+  ]
+}
