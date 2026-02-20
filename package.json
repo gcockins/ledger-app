@@ -2,7 +2,7 @@
   "name": "ledger-app",
   "version": "1.0.0",
   "private": true,
-  "homepage": "https://github.com/gcockins/ledger-app",
+  "homepage": "https://gcockins.github.io/ledger-app",
   "dependencies": {
     "gh-pages": "^6.1.1",
     "react": "^18.2.0",
