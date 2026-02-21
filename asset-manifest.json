@@ -1,10 +1,10 @@
 {
   "files": {
-    "main.js": "/ledger-app/static/js/main.a361e79a.js",
+    "main.js": "/ledger-app/static/js/main.b7ad1905.js",
     "index.html": "/ledger-app/index.html",
-    "main.a361e79a.js.map": "/ledger-app/static/js/main.a361e79a.js.map"
+    "main.b7ad1905.js.map": "/ledger-app/static/js/main.b7ad1905.js.map"
   },
   "entrypoints": [
-    "static/js/main.a361e79a.js"
+    "static/js/main.b7ad1905.js"
   ]
 }
