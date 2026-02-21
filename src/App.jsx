@@ -63,6 +63,324 @@ function HealthScore({ score }) {
   );
 }
 
+// ─── MANUAL ADD MODAL ─────────────────────────────────────────────────────────
+function ManualAddModal({ categories, onAdd, onClose }) {
+  const [desc, setDesc]     = useState("");
+  const [amount, setAmount] = useState("");
+  const [cat, setCat]       = useState("Food");
+  const [date, setDate]     = useState(new Date().toISOString().slice(0,10));
+  const S = {
+    overlay:{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:1000,display:"flex",alignItems:"flex-end",justifyContent:"center"},
+    modal:{background:"#0f1929",border:"1px solid #1e293b",borderRadius:"16px 16px 0 0",width:"100%",maxWidth:520,padding:24,paddingBottom:36},
+    input:{background:"#0a0f1a",border:"1px solid #1e293b",borderRadius:8,color:"#e2e8f0",padding:"12px 14px",fontSize:15,fontFamily:"'DM Sans',sans-serif",outline:"none",width:"100%",boxSizing:"border-box"},
+    label:{fontSize:11,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:6,fontWeight:700,display:"block"},
+    btn:(v="primary")=>({background:v==="primary"?"#e8c547":"transparent",color:v==="primary"?"#0a0f1a":"#e2e8f0",border:v==="ghost"?"1px solid #334155":"none",borderRadius:8,padding:"13px 20px",fontWeight:700,cursor:"pointer",fontSize:14,fontFamily:"'DM Sans',sans-serif",flex:1}),
+  };
+  const expenseCats = categories.filter(c=>!c.isIncome&&!c.excludeFromBudget);
+  const handleAdd = () => {
+    const amt = parseFloat(amount);
+    if (!desc.trim() || isNaN(amt) || amt <= 0) return;
+    onAdd({ id: `manual-${Date.now()}`, description: desc.trim(), amount: -amt, category: cat,
+      date: new Date(date+"T12:00:00"), month: date.slice(0,7), account:"Manual", isIncome:false, excluded:false });
+  };
+  return (
+    <div style={S.overlay} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={S.modal}>
+        <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:"#f1f5f9",marginBottom:20}}>Add Transaction</div>
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          <div><label style={S.label}>Description / Merchant</label>
+            <input style={S.input} placeholder="e.g. Starbucks, Gas station" value={desc} onChange={e=>setDesc(e.target.value)} autoFocus/>
+          </div>
+          <div style={{display:"flex",gap:10}}>
+            <div style={{flex:1}}><label style={S.label}>Amount ($)</label>
+              <input style={S.input} type="number" placeholder="0.00" min="0" step="0.01" value={amount} onChange={e=>setAmount(e.target.value)}/>
+            </div>
+            <div style={{flex:1}}><label style={S.label}>Date</label>
+              <input style={S.input} type="date" value={date} onChange={e=>setDate(e.target.value)}/>
+            </div>
+          </div>
+          <div><label style={S.label}>Category</label>
+            <select style={S.input} value={cat} onChange={e=>setCat(e.target.value)}>
+              {expenseCats.map(c=><option key={c.id} value={c.id} style={{background:"#0f1929"}}>{c.name}</option>)}
+            </select>
+          </div>
+          <div style={{display:"flex",gap:10,marginTop:4}}>
+            <button style={S.btn("ghost")} onClick={onClose}>Cancel</button>
+            <button style={S.btn()} onClick={handleAdd}>Add Transaction</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── RECEIPT SCANNER ──────────────────────────────────────────────────────────
+// No external API needed — takes a photo, shows preview, user fills in details
+// ── Receipt text parser — extracts merchant, total, date from raw OCR text ──
+function parseReceiptText(raw, categories) {
+  const lines = raw.split(/\n/).map(l => l.trim()).filter(Boolean);
+  const text  = raw.toLowerCase();
+
+  // ── Total amount: find the largest dollar value near "total"/"amount due" ──
+  let total = "";
+  // First pass: look for explicit total labels
+  const totalPatterns = [
+    /total\s*[:\-]?\s*\$?([\d,]+\.\d{2})/i,
+    /amount\s*due\s*[:\-]?\s*\$?([\d,]+\.\d{2})/i,
+    /balance\s*due\s*[:\-]?\s*\$?([\d,]+\.\d{2})/i,
+    /grand\s*total\s*[:\-]?\s*\$?([\d,]+\.\d{2})/i,
+    /sale\s*total\s*[:\-]?\s*\$?([\d,]+\.\d{2})/i,
+    /total\s+sale\s*[:\-]?\s*\$?([\d,]+\.\d{2})/i,
+    /you\s*paid\s*[:\-]?\s*\$?([\d,]+\.\d{2})/i,
+    /charged\s*[:\-]?\s*\$?([\d,]+\.\d{2})/i,
+  ];
+  for (const pat of totalPatterns) {
+    const m = raw.match(pat);
+    if (m) { total = m[1].replace(/,/g,""); break; }
+  }
+  // Fallback: largest dollar amount on the receipt
+  if (!total) {
+    const allAmounts = [...raw.matchAll(/\$?([\d,]+\.\d{2})/g)]
+      .map(m => parseFloat(m[1].replace(/,/g,"")))
+      .filter(n => n > 0.5 && n < 10000);
+    if (allAmounts.length) total = String(Math.max(...allAmounts));
+  }
+
+  // ── Date: look for common date patterns ──
+  let date = new Date().toISOString().slice(0,10);
+  const datePatterns = [
+    /(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/,
+    /(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})[,\s]+(\d{4})/i,
+    /(\d{4})[\/\-](\d{2})[\/\-](\d{2})/,
+  ];
+  for (const pat of datePatterns) {
+    const m = raw.match(pat);
+    if (m) {
+      try {
+        const d = new Date(m[0]);
+        if (!isNaN(d.getTime()) && d.getFullYear() > 2000) {
+          date = d.toISOString().slice(0,10);
+          break;
+        }
+      } catch(e) {}
+    }
+  }
+
+  // ── Merchant: usually the first 1-2 non-trivial lines ──
+  const skipWords = /^(receipt|invoice|order|transaction|date|time|cashier|server|table|thank|welcome|store|location|\d)/i;
+  let merchant = "";
+  for (const line of lines.slice(0, 6)) {
+    if (line.length > 3 && line.length < 50 && !skipWords.test(line) && !/^\W+$/.test(line)) {
+      merchant = line.replace(/[*#@|]/g,"").trim();
+      // Clean up common receipt junk
+      merchant = merchant.replace(/\s+\d{3,}.*$/, "").trim(); // strip trailing numbers/addresses
+      if (merchant.length > 2) break;
+    }
+  }
+  if (!merchant) merchant = "";
+
+  // ── Category guess based on merchant name ──
+  const mc = merchant.toLowerCase();
+  const catGuess = (() => {
+    if (/coffee|starbucks|dutch|koffi|tea|matcha|espresso|cafe/.test(mc)) return "Coffee / Tea";
+    if (/restaurant|grill|pizza|taco|burger|sushi|chinese|thai|diner|bistro|kitchen|eat|food|bakery|chipotle|chick|pollo|rubio|subway|mcdonald|wendy|jack\s*in/.test(mc)) return "Food";
+    if (/walmart|target|amazon|costco|sam.s|aldi|trader|vons|sprouts|kroger|safeway|whole\s*food|grocery|market|stater|aldi/.test(mc)) return "Food";
+    if (/cvs|walgreen|pharmacy|urgent|medical|doctor|dental|clinic|hospital|health/.test(mc)) return "Healthcare";
+    if (/shell|chevron|arco|mobil|exxon|bp\b|gas|fuel|76\b|valero/.test(mc)) return "Transport";
+    if (/uber|lyft|taxi|transit|metro|bus\b|train/.test(mc)) return "Transport";
+    if (/sephora|ulta|salon|beauty|spa|nail/.test(mc)) return "Shopping";
+    if (/home\s*depot|lowes|ace\s*hardware|ikea|bed\s*bath|tj\s*maxx|marshalls|ross|old\s*navy|gap\b|h&m|zara|macy|nordstrom|kohl/.test(mc)) return "Shopping";
+    if (/netflix|spotify|hulu|disney|apple|google|amazon\s*prime/.test(mc)) return "Subscription";
+    if (/movie|cinema|theater|amc|regal|concert|ticket/.test(mc)) return "Entertainment";
+    if (/electric|gas\s*co|utility|water|internet|att\b|verizon|spectrum|xfinity/.test(mc)) return "Utilities";
+    return "Food"; // most receipts are food/shopping
+  })();
+
+  const catId = categories.find(c => c.name === catGuess)?.id || "Food";
+  return { merchant, total, date, catId };
+}
+
+function ReceiptScanner({ categories, onAdd, onClose }) {
+  const [stage, setStage]     = useState("pick");   // pick | scanning | confirm | error
+  const [preview, setPreview] = useState(null);
+  const [ocrText, setOcrText] = useState("");
+  const [errMsg, setErrMsg]   = useState("");
+  const [desc, setDesc]       = useState("");
+  const [amount, setAmount]   = useState("");
+  const [cat, setCat]         = useState("Food");
+  const [date, setDate]       = useState(new Date().toISOString().slice(0,10));
+  // OCR.space free API key — public demo key, works for ~25k req/month
+  // Users can replace with their own from ocr.space/ocrapi
+  const OCR_API_KEY = "K81960703588957";
+
+  const S = {
+    overlay:{position:"fixed",inset:0,background:"rgba(0,0,0,0.92)",zIndex:1000,display:"flex",alignItems:"flex-end",justifyContent:"center"},
+    modal:{background:"#0f1929",border:"1px solid #1e293b",borderRadius:"16px 16px 0 0",width:"100%",maxWidth:520,padding:24,paddingBottom:36,maxHeight:"94vh",overflowY:"auto"},
+    input:{background:"#0a0f1a",border:"1px solid #1e293b",borderRadius:8,color:"#e2e8f0",padding:"12px 14px",fontSize:15,fontFamily:"'DM Sans',sans-serif",outline:"none",width:"100%",boxSizing:"border-box"},
+    label:{fontSize:11,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:6,fontWeight:700,display:"block"},
+    btn:(v="primary")=>({background:v==="primary"?"#e8c547":"transparent",color:v==="primary"?"#0a0f1a":"#e2e8f0",border:v==="ghost"?"1px solid #334155":"none",borderRadius:8,padding:"13px 20px",fontWeight:700,cursor:"pointer",fontSize:14,fontFamily:"'DM Sans',sans-serif",flex:1}),
+  };
+
+  const expenseCats = categories.filter(c=>!c.isIncome&&!c.excludeFromBudget);
+
+  const handleImage = async (file) => {
+    if (!file) return;
+    setPreview(URL.createObjectURL(file));
+    setStage("scanning");
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("apikey", OCR_API_KEY);
+      formData.append("language", "eng");
+      formData.append("isOverlayRequired", "false");
+      formData.append("detectOrientation", "true");
+      formData.append("scale", "true");
+      formData.append("OCREngine", "2"); // Engine 2 is better for receipts
+
+      const resp = await fetch("https://api.ocr.space/parse/image", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await resp.json();
+
+      if (data.IsErroredOnProcessing) {
+        throw new Error(data.ErrorMessage?.[0] || "OCR failed");
+      }
+
+      const raw = data.ParsedResults?.[0]?.ParsedText || "";
+      if (!raw.trim()) throw new Error("No text found in image");
+
+      setOcrText(raw);
+      const parsed = parseReceiptText(raw, categories);
+      setDesc(parsed.merchant);
+      setAmount(parsed.total);
+      setDate(parsed.date);
+      setCat(parsed.catId);
+      setStage("confirm");
+    } catch(err) {
+      setErrMsg(err.message || "Could not read receipt");
+      setStage("error");
+    }
+  };
+
+  const handleAdd = () => {
+    const amt = parseFloat(amount);
+    if (!desc.trim() || isNaN(amt) || amt <= 0) return;
+    onAdd({ id:`receipt-${Date.now()}`, description:desc.trim(), amount:-amt, category:cat,
+      date:new Date(date+"T12:00:00"), month:date.slice(0,7), account:"Manual", isIncome:false, excluded:false });
+  };
+
+  const reset = () => { setStage("pick"); setPreview(null); setDesc(""); setAmount(""); setOcrText(""); setErrMsg(""); };
+
+  return (
+    <div style={S.overlay} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={S.modal}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+          <div style={{fontFamily:"'DM Serif Display',serif",fontSize:20,color:"#f1f5f9"}}>📷 Scan Receipt</div>
+          <button style={{...S.btn("ghost"),flex:"none",padding:"8px 14px",fontSize:12}} onClick={onClose}>✕</button>
+        </div>
+
+        {/* Stage: pick image */}
+        {stage === "pick" && (
+          <div style={{display:"flex",gap:10,marginBottom:4}}>
+            <label style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8,
+              padding:"28px 16px",border:"2px dashed #1e293b",borderRadius:12,cursor:"pointer",background:"#0a0f1a",textAlign:"center"}}>
+              <div style={{fontSize:36}}>📷</div>
+              <div style={{fontSize:13,fontWeight:700,color:"#e2e8f0"}}>Take Photo</div>
+              <div style={{fontSize:11,color:"#475569"}}>Use camera</div>
+              <input type="file" accept="image/*" capture="environment" style={{display:"none"}}
+                onChange={e=>e.target.files[0]&&handleImage(e.target.files[0])}/>
+            </label>
+            <label style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8,
+              padding:"28px 16px",border:"2px dashed #1e293b",borderRadius:12,cursor:"pointer",background:"#0a0f1a",textAlign:"center"}}>
+              <div style={{fontSize:36}}>🖼️</div>
+              <div style={{fontSize:13,fontWeight:700,color:"#e2e8f0"}}>From Gallery</div>
+              <div style={{fontSize:11,color:"#475569"}}>Choose photo</div>
+              <input type="file" accept="image/*" style={{display:"none"}}
+                onChange={e=>e.target.files[0]&&handleImage(e.target.files[0])}/>
+            </label>
+          </div>
+        )}
+
+        {/* Stage: scanning */}
+        {stage === "scanning" && (
+          <div>
+            {preview && <img src={preview} alt="receipt" style={{width:"100%",maxHeight:160,objectFit:"contain",borderRadius:10,border:"1px solid #1e293b",background:"#0a0f1a",display:"block",marginBottom:16}}/>}
+            <div style={{textAlign:"center",padding:"20px 0"}}>
+              <div style={{fontSize:32,marginBottom:10}}>⏳</div>
+              <div style={{fontSize:15,fontWeight:700,color:"#e2e8f0",marginBottom:4}}>Reading receipt...</div>
+              <div style={{fontSize:12,color:"#475569"}}>OCR.space is extracting the text</div>
+            </div>
+          </div>
+        )}
+
+        {/* Stage: error */}
+        {stage === "error" && (
+          <div>
+            {preview && <img src={preview} alt="receipt" style={{width:"100%",maxHeight:160,objectFit:"contain",borderRadius:10,border:"1px solid #1e293b",background:"#0a0f1a",display:"block",marginBottom:14}}/>}
+            <div style={{background:"rgba(244,132,95,0.1)",border:"1px solid rgba(244,132,95,0.3)",borderRadius:8,padding:"12px 14px",fontSize:13,color:"#f4845f",marginBottom:16}}>
+              ⚠️ {errMsg} — fill in the details below manually
+            </div>
+            {/* Fall through to the confirm form below */}
+            <ReceiptForm {...{desc,setDesc,amount,setAmount,date,setDate,cat,setCat,expenseCats,S,handleAdd,onClose,ocrText,setOcrText}}/>
+          </div>
+        )}
+
+        {/* Stage: confirm extracted data */}
+        {stage === "confirm" && (
+          <div>
+            {preview && <img src={preview} alt="receipt" style={{width:"100%",maxHeight:160,objectFit:"contain",borderRadius:10,border:"1px solid #1e293b",background:"#0a0f1a",display:"block",marginBottom:14}}/>}
+            <div style={{background:"rgba(45,212,167,0.08)",border:"1px solid rgba(45,212,167,0.2)",borderRadius:8,padding:"10px 14px",fontSize:12,color:"#2dd4a7",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span>✓ Receipt scanned — review details below</span>
+              <button onClick={reset} style={{background:"none",border:"none",color:"#475569",cursor:"pointer",fontSize:11,padding:"2px 6px"}}>rescan</button>
+            </div>
+            <ReceiptForm {...{desc,setDesc,amount,setAmount,date,setDate,cat,setCat,expenseCats,S,handleAdd,onClose,ocrText,setOcrText}}/>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Shared form used in both confirm + error stages
+function ReceiptForm({ desc,setDesc,amount,setAmount,date,setDate,cat,setCat,expenseCats,S,handleAdd,onClose,ocrText,setOcrText }) {
+  const [showRaw, setShowRaw] = useState(false);
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      <div><label style={S.label}>Merchant / Description</label>
+        <input style={S.input} placeholder="e.g. Starbucks, Target" value={desc} onChange={e=>setDesc(e.target.value)} autoFocus/>
+      </div>
+      <div style={{display:"flex",gap:10}}>
+        <div style={{flex:1}}><label style={S.label}>Total ($)</label>
+          <input style={S.input} type="number" placeholder="0.00" min="0" step="0.01" value={amount} onChange={e=>setAmount(e.target.value)}/>
+        </div>
+        <div style={{flex:1}}><label style={S.label}>Date</label>
+          <input style={S.input} type="date" value={date} onChange={e=>setDate(e.target.value)}/>
+        </div>
+      </div>
+      <div><label style={S.label}>Category</label>
+        <select style={S.input} value={cat} onChange={e=>setCat(e.target.value)}>
+          {expenseCats.map(c=><option key={c.id} value={c.id} style={{background:"#0f1929"}}>{c.name}</option>)}
+        </select>
+      </div>
+      {ocrText && (
+        <div>
+          <button onClick={()=>setShowRaw(p=>!p)} style={{background:"none",border:"none",color:"#334155",cursor:"pointer",fontSize:11,padding:0,fontFamily:"'DM Sans',sans-serif"}}>
+            {showRaw?"▲ Hide":"▼ Show"} raw OCR text
+          </button>
+          {showRaw && <pre style={{marginTop:8,padding:"10px 12px",background:"#070d1a",borderRadius:8,fontSize:10,color:"#475569",overflowX:"auto",maxHeight:140,overflowY:"auto",whiteSpace:"pre-wrap"}}>{ocrText}</pre>}
+        </div>
+      )}
+      <div style={{display:"flex",gap:10,marginTop:4}}>
+        <button style={S.btn("ghost")} onClick={onClose}>Cancel</button>
+        <button style={{...S.btn(),opacity:(!desc.trim()||!amount)?0.4:1}} onClick={handleAdd} disabled={!desc.trim()||!amount}>
+          Add to Ledger
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── CATEGORY MANAGER MODAL ───────────────────────────────────────────────────
 function CategoryManager({ categories, onSave, onClose }) {
   const [cats, setCats] = useState(categories.map(c=>({...c})));
@@ -254,11 +572,31 @@ export default function App() {
   const [transactions, setTransactions] = useState(()=> {
     const loaded = loadTransactions();
     // Migrate any old "Income" generic transactions to proper subcategories
-    const migrated = migrateIncomeCategories(loaded);
-    // If anything changed, save the migrated data back immediately
-    if (migrated.some((t,i) => t.category !== loaded[i].category)) {
+    let migrated = migrateIncomeCategories(loaded);
+
+    // Fix Wells Fargo Credit Card sign bug:
+    // CC charges were stored as positive (income) — flip them to negative (expense).
+    // Identify: account label contains "credit", amount > 0, category is NOT a true income category,
+    // and NOT a known credit (savings transfer, CC payment, transfer received).
+    const INCOME_CATS = new Set(['W2 Payroll','Side Income','Interest/Dividends','Income','Credit Card Reward','Credit-Card-Reward-1771541061346']);
+    const SKIP_CATS   = new Set(['CC Payment','Savings Transfer','Transfer Received','Investments']);
+    let signFixed = 0;
+    migrated = migrated.map(t => {
+      const acct = (t.account || '').toLowerCase();
+      const isWFCredit = acct.includes('credit') && (acct.includes('wells') || acct.includes('wf') || acct.includes('fargo'));
+      if (!isWFCredit) return t;
+      if (t.amount <= 0) return t;                          // already negative — fine
+      if (INCOME_CATS.has(t.category)) return t;            // real income — leave it
+      if (SKIP_CATS.has(t.category)) return t;              // excluded category — leave it
+      // This is a CC charge sitting as positive — flip it
+      signFixed++;
+      return { ...t, amount: -t.amount };
+    });
+    if (signFixed > 0) {
       saveTransactions(migrated);
+      console.log(`[Ledger] Fixed sign on ${signFixed} Wells Fargo Credit Card charges`);
     }
+
     return migrated;
   });
   const [budget, setBudget]             = useState(()=>loadBudget());
@@ -290,10 +628,18 @@ export default function App() {
   const [dateRange, setDateRange]         = useState(12);       // months to include in analysis (999 = all)
   const [largeTxnThreshold, setLargeTxnThreshold] = useState(500);
   const [showBackupReminder, setShowBackupReminder] = useState(() => {
-    // Show reminder once per browser session (resets when page reloads = new version install)
     if (sessionStorage.getItem("ledger_backup_dismissed")) return false;
-    return true; // show on first load each session
+    return true;
   });
+  const [showReceiptScanner, setShowReceiptScanner] = useState(false);
+  const [showManualAdd, setShowManualAdd]           = useState(false);
+  const [isMobile, setIsMobile]                     = useState(() => window.innerWidth < 768);
+
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
+  }, []);
 
   const hasData = transactions.length > 0;
 
@@ -554,13 +900,44 @@ export default function App() {
 
   const monthlyData = recentMonths.map(month => {
     const mt = activeTxns.filter(t=>t.month===month);
-    // isIncome: check category definition first, fall back to stored flag
-    const isIncomeTxn = t => getCat(t.category).isIncome || t.isIncome === true;
-    const income   = mt.filter(isIncomeTxn).reduce((s,t)=>s+Math.abs(t.amount),0);
-    const expenses = mt.filter(t=>!isIncomeTxn(t) && !getCat(t.category).excludeFromBudget && t.amount<0).reduce((s,t)=>s+Math.abs(t.amount),0);
+    const getC = t => getCat(t.category);
+
+    // ── INCOME ────────────────────────────────────────────────────────────────
+    // ONLY true income categories (W2 Payroll, Interest, Side Income, CC Rewards)
+    // + Housing credits (mortgage escrow refunds from bank/lender are real income)
+    // Shopping/Food/etc refunds are NOT income — they reduce that category's spending
+    // Savings Transfer, CC Payment, Transfer Received — invisible both directions
+    const income = mt.reduce((s,t) => {
+      const c = getC(t);
+      if (c.excludeFromBudget && !c.isIncome) return s;       // excluded — skip
+      if (c.isIncome) return s + (t.amount > 0 ? t.amount : 0);  // true income, credits only
+      if (t.amount > 0 && t.category === 'Housing') return s + t.amount; // mortgage refund
+      return s;
+    }, 0);
+
+    // ── EXPENSES ──────────────────────────────────────────────────────────────
+    // Net each category: charges minus any refunds/returns in that same category
+    // So a Costco return reduces Food spending, not inflates income
+    const expenses = mt.reduce((s,t) => {
+      const c = getC(t);
+      if (c.isIncome || c.excludeFromBudget) return s;
+      if (t.category === 'Housing' && t.amount > 0) return s; // Housing credit = income, not expense offset
+      if (t.amount < 0) return s + Math.abs(t.amount);         // charge
+      if (t.amount > 0) return s - t.amount;                   // refund offsets spending
+      return s;
+    }, 0);
+
+    const netExpenses = Math.max(0, expenses);
+
     const catBreak = {};
-    categories.forEach(c=>{ catBreak[c.id]=mt.filter(t=>t.category===c.id&&!c.isIncome&&t.amount<0).reduce((s,t)=>s+Math.abs(t.amount),0); });
-    return { month, label:fmtMonth(month), income, expenses, cashflow:income-expenses, ...catBreak };
+    categories.forEach(c => {
+      // Net per category: charges minus refunds
+      const charges = mt.filter(t=>t.category===c.id&&!c.isIncome&&t.amount<0).reduce((s,t)=>s+Math.abs(t.amount),0);
+      const refunds  = mt.filter(t=>t.category===c.id&&!c.isIncome&&t.amount>0&&c.id!=='Housing').reduce((s,t)=>s+t.amount,0);
+      catBreak[c.id] = Math.max(0, charges - refunds);
+    });
+
+    return { month, label:fmtMonth(month), income, expenses:netExpenses, cashflow:income-netExpenses, ...catBreak };
   });
 
   const avgIncome   = monthlyData.reduce((s,m)=>s+m.income,0)  /(monthlyData.length||1);
@@ -571,10 +948,10 @@ export default function App() {
   const recentTxns = activeTxns.filter(t => recentMonths.includes(t.month));
 
   // categoryTotals = avg/month (for budget planning — what to expect each month)
-  // categoryPeriodTotals = total spent in period (for "what did I actually spend" view)
+  // categoryPeriodTotals = total spent in period (net of refunds)
   const categoryTotals = {};
-  const categoryPeriodTotals = {};   // total in the selected window — NOT divided
-  const categoryActiveMonths = {};   // how many months had activity
+  const categoryPeriodTotals = {};
+  const categoryActiveMonths = {};
   categories.forEach(cat => {
     if (cat.isIncome || cat.excludeFromBudget) {
       categoryTotals[cat.id] = 0;
@@ -582,18 +959,21 @@ export default function App() {
       categoryActiveMonths[cat.id] = 0;
       return;
     }
-    const catTxns = recentTxns.filter(t => t.category === cat.id && t.amount < 0);
+    const catTxns = recentTxns.filter(t => t.category === cat.id);
     if (catTxns.length === 0) {
       categoryTotals[cat.id] = 0;
       categoryPeriodTotals[cat.id] = 0;
       categoryActiveMonths[cat.id] = 0;
       return;
     }
-    const total = catTxns.reduce((s,t)=>s+Math.abs(t.amount),0);
-    const activeMonthCount = new Set(catTxns.map(t=>t.month)).size;
-    categoryPeriodTotals[cat.id] = total;
+    // Net: debits minus any refunds/credits in the same category
+    const debits  = catTxns.filter(t=>t.amount<0).reduce((s,t)=>s+Math.abs(t.amount),0);
+    const credits = catTxns.filter(t=>t.amount>0).reduce((s,t)=>s+t.amount,0);
+    const net = Math.max(0, debits - credits);
+    const activeMonthCount = new Set(catTxns.filter(t=>t.amount<0).map(t=>t.month)).size;
+    categoryPeriodTotals[cat.id] = net;
     categoryActiveMonths[cat.id] = activeMonthCount;
-    categoryTotals[cat.id] = total / Math.max(activeMonthCount, 1);
+    categoryTotals[cat.id] = net / Math.max(activeMonthCount, 1);
   });
 
   const healthScore = Math.min(100,Math.max(0,
@@ -649,7 +1029,15 @@ export default function App() {
   const txnPageItems = displayTxns.slice(txnPage * TXN_PAGE_SIZE, (txnPage + 1) * TXN_PAGE_SIZE);
 
   // Income breakdown — dual-check: category definition OR stored isIncome flag
-  const isIncomeTxn = t => getCat(t.category).isIncome || t.isIncome === true;
+  // isIncomeTxn — only true income categories + Housing credits (mortgage refunds)
+  // Shopping/Food refunds are NOT income — they just reduce that category's spending
+  const isIncomeTxn = t => {
+    const c = getCat(t.category);
+    if (c.excludeFromBudget && !c.isIncome) return false;
+    if (c.isIncome) return t.amount > 0;  // credits only — a debit at your employer is not income
+    if (t.amount > 0 && t.category === 'Housing') return true; // mortgage escrow refund
+    return false;
+  };
   const incomeBreakdown = {};
   incomeCats.forEach(c=>{
     incomeBreakdown[c.id] = activeTxns.filter(t=>t.category===c.id).reduce((s,t)=>s+Math.abs(t.amount),0)/(recentMonths.length||1);
@@ -669,22 +1057,24 @@ export default function App() {
 
   // ── Styles ────────────────────────────────────────────────────────────────
   const S = {
-    app:    { minHeight:"100vh",background:"#0a0f1a",color:"#e2e8f0",fontFamily:"'DM Sans',sans-serif" },
-    header: { background:"linear-gradient(135deg,#0f1929 0%,#0a0f1a 100%)",borderBottom:"1px solid #1e293b",padding:"14px 28px",display:"flex",alignItems:"center",gap:12 },
-    logo:   { fontFamily:"'DM Serif Display',serif",fontSize:22,color:"#e8c547" },
-    logoSub:{ fontSize:10,color:"#475569",letterSpacing:3,textTransform:"uppercase" },
-    nav:    { display:"flex",gap:2,padding:"0 28px",borderBottom:"1px solid #1e293b",background:"#0d1525",alignItems:"center",overflowX:"auto" },
-    navBtn: a=>({ padding:"12px 16px",border:"none",background:"none",color:a?"#e8c547":"#64748b",cursor:"pointer",fontSize:12,fontWeight:700,borderBottom:a?"2px solid #e8c547":"2px solid transparent",fontFamily:"'DM Sans',sans-serif",transition:"all 0.2s",whiteSpace:"nowrap" }),
-    card:   { background:"#0f1929",border:"1px solid #1e293b",borderRadius:12,padding:20 },
-    statCard:{ background:"#0f1929",border:"1px solid #1e293b",borderRadius:12,padding:18,flex:1,minWidth:140 },
-    row:    { display:"flex",gap:14,flexWrap:"wrap" },
-    label:  { fontSize:10,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:5,fontWeight:700 },
-    input:  { background:"#0a0f1a",border:"1px solid #1e293b",borderRadius:7,color:"#e2e8f0",padding:"9px 12px",fontSize:13,fontFamily:"'DM Sans',sans-serif",outline:"none" },
-    btn:    (v="primary")=>({ background:v==="primary"?"#e8c547":v==="danger"?"rgba(127,29,29,0.5)":"transparent",color:v==="primary"?"#0a0f1a":v==="danger"?"#f87171":"#e2e8f0",border:v==="ghost"?"1px solid #334155":"none",borderRadius:7,padding:"9px 18px",fontWeight:700,cursor:"pointer",fontSize:12,fontFamily:"'DM Sans',sans-serif",transition:"all 0.2s",whiteSpace:"nowrap" }),
-    section:{ padding:"24px 28px" },
-    h2:     { fontFamily:"'DM Serif Display',serif",fontSize:24,color:"#f1f5f9",margin:"0 0 4px" },
-    h3:     { fontFamily:"'DM Serif Display',serif",fontSize:16,color:"#f1f5f9",margin:"0 0 14px" },
-    sub:    { color:"#475569",fontSize:12,margin:"0 0 18px" },
+    app:     { minHeight:"100vh",background:"#0a0f1a",color:"#e2e8f0",fontFamily:"'DM Sans',sans-serif",paddingBottom:isMobile?80:0 },
+    header:  { background:"linear-gradient(135deg,#0f1929 0%,#0a0f1a 100%)",borderBottom:"1px solid #1e293b",padding:isMobile?"11px 14px":"14px 28px",display:"flex",alignItems:"center",gap:10 },
+    logo:    { fontFamily:"'DM Serif Display',serif",fontSize:isMobile?19:22,color:"#e8c547" },
+    logoSub: { fontSize:10,color:"#475569",letterSpacing:3,textTransform:"uppercase",display:isMobile?"none":"block" },
+    nav:     { display:isMobile?"none":"flex",gap:2,padding:"0 28px",borderBottom:"1px solid #1e293b",background:"#0d1525",alignItems:"center",overflowX:"auto" },
+    mobileNav:{ display:isMobile?"flex":"none",position:"fixed",bottom:0,left:0,right:0,background:"#0d1525",borderTop:"1px solid #1e293b",zIndex:200,height:64,alignItems:"stretch" },
+    mobileNavBtn: a=>({ flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,border:"none",background:a?"rgba(232,197,71,0.08)":"none",color:a?"#e8c547":"#475569",cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontSize:9,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",transition:"all 0.15s",borderTop:a?"2px solid #e8c547":"2px solid transparent" }),
+    navBtn:  a=>({ padding:"12px 16px",border:"none",background:"none",color:a?"#e8c547":"#64748b",cursor:"pointer",fontSize:12,fontWeight:700,borderBottom:a?"2px solid #e8c547":"2px solid transparent",fontFamily:"'DM Sans',sans-serif",transition:"all 0.2s",whiteSpace:"nowrap" }),
+    card:    { background:"#0f1929",border:"1px solid #1e293b",borderRadius:12,padding:isMobile?14:20 },
+    statCard:{ background:"#0f1929",border:"1px solid #1e293b",borderRadius:12,padding:isMobile?12:18,flex:1,minWidth:isMobile?120:140 },
+    row:     { display:"flex",gap:isMobile?8:14,flexWrap:"wrap" },
+    label:   { fontSize:10,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:5,fontWeight:700 },
+    input:   { background:"#0a0f1a",border:"1px solid #1e293b",borderRadius:7,color:"#e2e8f0",padding:"9px 12px",fontSize:13,fontFamily:"'DM Sans',sans-serif",outline:"none" },
+    btn:     (v="primary")=>({ background:v==="primary"?"#e8c547":v==="danger"?"rgba(127,29,29,0.5)":"transparent",color:v==="primary"?"#0a0f1a":v==="danger"?"#f87171":"#e2e8f0",border:v==="ghost"?"1px solid #334155":"none",borderRadius:7,padding:"9px 18px",fontWeight:700,cursor:"pointer",fontSize:12,fontFamily:"'DM Sans',sans-serif",transition:"all 0.2s",whiteSpace:"nowrap" }),
+    section: { padding:isMobile?"14px 14px":"24px 28px" },
+    h2:      { fontFamily:"'DM Serif Display',serif",fontSize:isMobile?20:24,color:"#f1f5f9",margin:"0 0 4px" },
+    h3:      { fontFamily:"'DM Serif Display',serif",fontSize:16,color:"#f1f5f9",margin:"0 0 14px" },
+    sub:     { color:"#475569",fontSize:12,margin:"0 0 18px" },
   };
 
   // Walmart summary
@@ -806,20 +1196,24 @@ export default function App() {
       <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 
       <div style={S.header}>
-        <div style={{flex:1}}><div style={S.logo}>Ledger</div><div style={S.logoSub}>Personal Finance</div></div>
-        <div style={{display:"flex",gap:7,alignItems:"center",flexWrap:"wrap"}}>
+        <div style={{flex:1}}>
+          <div style={S.logo}>Ledger</div>
+          <div style={S.logoSub}>Personal Finance</div>
+        </div>
+        {/* Desktop header actions */}
+        {!isMobile && <div style={{display:"flex",gap:7,alignItems:"center",flexWrap:"wrap"}}>
           <span style={{fontSize:11,color:"#334155"}}>💾 {transactions.length} txns</span>
           <button style={{...S.btn("ghost"),fontSize:11}} onClick={()=>exportDataBackup(transactions,budget,profile,categories,merchantRules)}>💾 Backup</button>
           <button style={{...S.btn("ghost"),fontSize:11,borderColor:"#2dd4a7",color:"#2dd4a7"}} onClick={exportCategoryRules}>📋 Export Rules</button>
           <button style={{...S.btn("ghost"),fontSize:11}} onClick={()=>setShowCatManager(true)}>⚙ Categories</button>
           <label style={{...S.btn("ghost"),fontSize:11,cursor:"pointer",borderColor:"#f97316",color:"#f97316"}}>
-            🛍 Walmart Orders<input type="file" accept=".csv" style={{display:"none"}} onChange={e=>e.target.files[0]&&handleWalmartFile(e.target.files[0])}/>
+            🛍 Walmart<input type="file" accept=".csv" style={{display:"none"}} onChange={e=>e.target.files[0]&&handleWalmartFile(e.target.files[0])}/>
           </label>
           <label style={{...S.btn("ghost"),fontSize:11,cursor:"pointer",borderColor:"#f59e0b",color:"#f59e0b"}}>
-            📦 Amazon Orders<input type="file" accept=".csv" style={{display:"none"}} onChange={e=>e.target.files[0]&&handleAmazonFile(e.target.files[0])}/>
+            📦 Amazon<input type="file" accept=".csv" style={{display:"none"}} onChange={e=>e.target.files[0]&&handleAmazonFile(e.target.files[0])}/>
           </label>
           <label style={{...S.btn("ghost"),fontSize:11,cursor:"pointer"}}>
-            + Add Data<input type="file" accept=".csv" style={{display:"none"}} onChange={e=>{
+            + Add CSV<input type="file" accept=".csv" style={{display:"none"}} onChange={e=>{
               if(e.target.files[0]){const acct=prompt("Which account?")||"Unknown";handleFile(e.target.files[0],acct);}
             }}/>
           </label>
@@ -830,17 +1224,20 @@ export default function App() {
               </div>
             : <button style={{...S.btn("ghost"),fontSize:11,color:"#334155"}} onClick={()=>setShowClearConfirm(true)}>Reset</button>
           }
-        </div>
+        </div>}
+        {/* Mobile header — just backup + add */}
+        {isMobile && <div style={{display:"flex",gap:6,alignItems:"center"}}>
+          <button style={{...S.btn("ghost"),fontSize:11,padding:"7px 11px"}} onClick={()=>exportDataBackup(transactions,budget,profile,categories,merchantRules)}>💾</button>
+          <button style={{...S.btn("ghost"),fontSize:11,padding:"7px 11px"}} onClick={()=>setShowCatManager(true)}>⚙</button>
+          <button style={{...S.btn(),fontSize:11,padding:"7px 14px"}} onClick={()=>setShowManualAdd(true)}>+ Add</button>
+        </div>}
       </div>
 
       <div style={S.nav}>
         {tabs.map(tab=><button key={tab} style={S.navBtn(activeTab===tab)} onClick={()=>setActiveTab(tab)}>{tab.charAt(0).toUpperCase()+tab.slice(1)}</button>)}
         <div style={{marginLeft:"auto",display:"flex",gap:10,alignItems:"center",padding:"6px 0"}}>
-          {/* Date range selector — shows what window all averages are based on */}
           <div style={{display:"flex",alignItems:"center",gap:6}}>
-            <span style={{fontSize:10,color:"#475569",fontWeight:700,letterSpacing:1,textTransform:"uppercase",whiteSpace:"nowrap"}}>
-              Analysis window:
-            </span>
+            <span style={{fontSize:10,color:"#475569",fontWeight:700,letterSpacing:1,textTransform:"uppercase",whiteSpace:"nowrap"}}>Window:</span>
             {[3,6,12,allMonths.length].filter((v,i,a)=>a.indexOf(v)===i && v<=allMonths.length).map(n=>(
               <button key={n} onClick={()=>setDateRange(n)}
                 style={{padding:"4px 10px",borderRadius:5,border:"none",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",
@@ -855,15 +1252,90 @@ export default function App() {
         </div>
       </div>
 
+      {/* ── Mobile bottom nav ── */}
+      <div style={S.mobileNav}>
+        {[
+          {id:"overview", icon:"📊", label:"Overview"},
+          {id:"transactions", icon:"📋", label:"Txns"},
+          {id:"income", icon:"💰", label:"Income"},
+          ...(budget?[{id:"budget", icon:"🎯", label:"Budget"}]:[]),
+          {id:"__add", icon:"＋", label:"Add"},
+        ].map(t => t.id === "__add"
+          ? <button key="add" style={{...S.mobileNavBtn(false), color:"#e8c547"}} onClick={()=>setShowManualAdd(true)}>
+              <div style={{fontSize:22,lineHeight:1,fontWeight:300}}>＋</div>
+              <span>Add</span>
+            </button>
+          : <button key={t.id} style={S.mobileNavBtn(activeTab===t.id)} onClick={()=>setActiveTab(t.id)}>
+              <div style={{fontSize:18,lineHeight:1}}>{t.icon}</div>
+              <span>{t.label}</span>
+            </button>
+        )}
+      </div>
+
+      {/* ── Receipt scan FAB (mobile only) ── */}
+      {isMobile && hasData && (
+        <button onClick={()=>setShowReceiptScanner(true)} style={{
+          position:"fixed", bottom:76, right:16, zIndex:150,
+          width:52, height:52, borderRadius:"50%",
+          background:"linear-gradient(135deg,#e8c547,#f59e0b)",
+          border:"none", cursor:"pointer", fontSize:22,
+          boxShadow:"0 4px 20px rgba(232,197,71,0.4)",
+          display:"flex", alignItems:"center", justifyContent:"center",
+        }}>📷</button>
+      )}
+
+      {/* ── Budget alert banners ── */}
+      {budget && (() => {
+        const currentMonth = new Date().toISOString().slice(0,7);
+        const currentMonthTxns = activeTxns.filter(t => t.month === currentMonth);
+        const alerts = budgetCats.map(cat => {
+          const budgeted = budget[cat.id] || 0;
+          if (!budgeted) return null;
+          const spent = currentMonthTxns
+            .filter(t => t.category === cat.id && t.amount < 0)
+            .reduce((s,t) => s + Math.abs(t.amount), 0);
+          const pct = spent / budgeted;
+          if (pct < 0.8) return null;
+          return { cat, spent, budgeted, pct, over: pct >= 1 };
+        }).filter(Boolean);
+        if (!alerts.length) return null;
+        return (
+          <div style={{background:"#0a0f1a",borderBottom:"1px solid #1e293b"}}>
+            {alerts.map(({cat, spent, budgeted, pct, over}) => (
+              <div key={cat.id} style={{
+                display:"flex", alignItems:"center", gap:10, padding:"9px 20px",
+                borderBottom:"1px solid #0d1525",
+                background: over ? "rgba(244,132,95,0.06)" : "rgba(232,197,71,0.04)"
+              }}>
+                <div style={{width:8,height:8,borderRadius:"50%",background:cat.color,flexShrink:0}}/>
+                <div style={{flex:1,fontSize:12}}>
+                  <span style={{fontWeight:700,color:over?"#f4845f":"#e8c547"}}>{over?"🚨 Over budget":"⚠️ Approaching limit"}</span>
+                  <span style={{color:"#64748b"}}> · {cat.name}: </span>
+                  <span style={{color:"#e2e8f0",fontWeight:600}}>{fmt(spent)} of {fmt(budgeted)} ({Math.round(pct*100)}%)</span>
+                </div>
+                <div style={{width:80,height:4,background:"#1e293b",borderRadius:2,flexShrink:0}}>
+                  <div style={{width:`${Math.min(100,pct*100)}%`,height:4,background:over?"#f4845f":"#e8c547",borderRadius:2}}/>
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
+
       {/* ── Backup reminder banner ── */}
       {showBackupReminder && transactions.length > 0 && (
-        <div style={{background:"#0a1628",borderBottom:"1px solid #1e4080",padding:"10px 24px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+        <div style={{background:"#0a1628",borderBottom:"1px solid #1e4080",padding:"10px 20px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
           <span style={{fontSize:13,color:"#60a5fa",fontWeight:700}}>💾 Backup your progress</span>
-          <span style={{fontSize:12,color:"#475569",flex:1}}>Save a backup before updating to a new version — restoring it takes 2 seconds and preserves all your categories and reclassifications.</span>
-          <button style={{...S.btn(),fontSize:11,padding:"6px 14px"}} onClick={()=>{ exportDataBackup(transactions,budget,profile,categories,merchantRules); setShowBackupReminder(false); sessionStorage.setItem("ledger_backup_dismissed","1"); }}>Download Backup Now</button>
+          <span style={{fontSize:12,color:"#475569",flex:1}}>Save before updating to a new version.</span>
+          <button style={{...S.btn(),fontSize:11,padding:"6px 14px"}} onClick={()=>{ exportDataBackup(transactions,budget,profile,categories,merchantRules); setShowBackupReminder(false); sessionStorage.setItem("ledger_backup_dismissed","1"); }}>Download</button>
           <button style={{...S.btn("ghost"),fontSize:11,padding:"6px 10px"}} onClick={()=>{ setShowBackupReminder(false); sessionStorage.setItem("ledger_backup_dismissed","1"); }}>✕</button>
         </div>
       )}
+
+      {/* ── Modals ── */}
+      {showReceiptScanner && <ReceiptScanner categories={categories} onAdd={txn=>{ setTransactions(prev=>[...prev,txn]); setShowReceiptScanner(false); showToast(`Added: ${txn.description} · ${fmt(Math.abs(txn.amount))}`); }} onClose={()=>setShowReceiptScanner(false)}/>}
+      {showManualAdd && <ManualAddModal categories={categories} onAdd={txn=>{ setTransactions(prev=>[...prev,txn]); setShowManualAdd(false); showToast(`Added: ${txn.description} · ${fmt(Math.abs(txn.amount))}`); }} onClose={()=>setShowManualAdd(false)}/>}
+
       {activeTab==="overview"&&(
         <div style={S.section}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:12,marginBottom:4}}>

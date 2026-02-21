@@ -11,10 +11,12 @@ const KEYS = {
 
 // Map old timestamp-based category IDs → new clean permanent IDs
 const CATEGORY_ID_MIGRATION = {
-  "Coffee-/-Tea-1771459649923": "Coffee / Tea",
-  "Landscape-1771459661164":    "Landscape",
-  "Utilities-1771459840619":    "Utilities",
-  "Vacation-1771462459054":     "Vacation",
+  "Coffee-/-Tea-1771459649923":       "Coffee / Tea",
+  "Landscape-1771459661164":          "Landscape",
+  "Utilities-1771459840619":          "Utilities",
+  "Vacation-1771462459054":           "Vacation",
+  "Credit-Card-Reward-1771541061346": "Credit Card Reward",
+  "Subscription-1771541349461":       "Subscription",
 };
 
 const INCOME_CATEGORY_IDS = new Set([
@@ -68,7 +70,7 @@ export const DEFAULT_CATEGORIES = [
   // ── Income (isIncome: true — excluded from budget, shown in income tab) ──
   { id: "W2 Payroll",          name: "W2 Payroll",          color: "#2dd4a7", excludeFromBudget: true,  isIncome: true,  builtIn: true },
   { id: "Side Income",         name: "Side Income",          color: "#10b981", excludeFromBudget: true,  isIncome: true,  builtIn: true },
-  { id: "Transfer Received",   name: "Transfer Received",    color: "#6ee7b7", excludeFromBudget: true,  isIncome: true,  builtIn: true },
+  { id: "Transfer Received",   name: "Transfer Received",    color: "#6ee7b7", excludeFromBudget: true,  isIncome: false, builtIn: true },
   { id: "Interest/Dividends",  name: "Interest/Dividends",   color: "#a7f3d0", excludeFromBudget: true,  isIncome: true,  builtIn: true },
   // "Income" kept as legacy alias so old saved transactions still resolve correctly
   { id: "Income",              name: "Income",               color: "#2dd4a7", excludeFromBudget: true,  isIncome: true,  builtIn: true },
@@ -84,10 +86,12 @@ export const DEFAULT_CATEGORIES = [
   { id: "Education",           name: "Education",            color: "#a78bfa", excludeFromBudget: false, isIncome: false, builtIn: true },
   { id: "Giving",              name: "Giving",               color: "#f472b6", excludeFromBudget: false, isIncome: false, builtIn: true },
   // ── Custom categories (hard-coded from user's actual spending) ───────────────
-  { id: "Coffee / Tea",    name: "Coffee / Tea",  color: "#a78bfa", excludeFromBudget: false, isIncome: false, builtIn: true },
-  { id: "Landscape",       name: "Landscape",     color: "#10b981", excludeFromBudget: false, isIncome: false, builtIn: true },
-  { id: "Utilities",       name: "Utilities",     color: "#e8c547", excludeFromBudget: false, isIncome: false, builtIn: true },
-  { id: "Vacation",        name: "Vacation",      color: "#f59e0b", excludeFromBudget: false, isIncome: false, builtIn: true },
+  { id: "Coffee / Tea",        name: "Coffee / Tea",        color: "#a78bfa", excludeFromBudget: false, isIncome: false, builtIn: true },
+  { id: "Landscape",           name: "Landscape",           color: "#10b981", excludeFromBudget: false, isIncome: false, builtIn: true },
+  { id: "Utilities",           name: "Utilities",           color: "#e8c547", excludeFromBudget: false, isIncome: false, builtIn: true },
+  { id: "Vacation",            name: "Vacation",            color: "#f59e0b", excludeFromBudget: false, isIncome: false, builtIn: true },
+  { id: "Subscription",        name: "Subscription",        color: "#818cf8", excludeFromBudget: false, isIncome: false, builtIn: true },
+  { id: "Credit Card Reward",  name: "Credit Card Reward",  color: "#34d399", excludeFromBudget: true,  isIncome: true,  builtIn: true },
   // ── Pass-through (excluded from budget totals) ────────────────────────────
   { id: "Investments",         name: "Investments",          color: "#34d399", excludeFromBudget: true,  isIncome: false, builtIn: true },
   { id: "Savings Transfer",    name: "Savings Transfer",     color: "#4ecdc4", excludeFromBudget: true,  isIncome: false, builtIn: true },
@@ -99,18 +103,20 @@ export const DEFAULT_CATEGORIES = [
 // still need to resolve to the correct category name and flags.
 // These are NOT shown in the UI (hidden via legacy:true) but getCat() finds them.
 export const LEGACY_CATEGORY_ALIASES = [
-  { id: "Coffee-/-Tea-1771459649923", name: "Coffee / Tea",  color: "#a78bfa", excludeFromBudget: false, isIncome: false, builtIn: false, legacy: true },
-  { id: "Landscape-1771459661164",    name: "Landscape",     color: "#10b981", excludeFromBudget: false, isIncome: false, builtIn: false, legacy: true },
-  { id: "Utilities-1771459840619",    name: "Utilities",     color: "#e8c547", excludeFromBudget: false, isIncome: false, builtIn: false, legacy: true },
-  { id: "Vacation-1771462459054",     name: "Vacation",      color: "#f59e0b", excludeFromBudget: false, isIncome: false, builtIn: false, legacy: true },
+  { id: "Coffee-/-Tea-1771459649923",       name: "Coffee / Tea",       color: "#a78bfa", excludeFromBudget: false, isIncome: false,  builtIn: false, legacy: true },
+  { id: "Landscape-1771459661164",          name: "Landscape",          color: "#10b981", excludeFromBudget: false, isIncome: false,  builtIn: false, legacy: true },
+  { id: "Utilities-1771459840619",          name: "Utilities",          color: "#e8c547", excludeFromBudget: false, isIncome: false,  builtIn: false, legacy: true },
+  { id: "Vacation-1771462459054",           name: "Vacation",           color: "#f59e0b", excludeFromBudget: false, isIncome: false,  builtIn: false, legacy: true },
+  { id: "Credit-Card-Reward-1771541061346", name: "Credit Card Reward", color: "#34d399", excludeFromBudget: true,  isIncome: true,   builtIn: false, legacy: true },
+  { id: "Subscription-1771541349461",       name: "Subscription",       color: "#818cf8", excludeFromBudget: false, isIncome: false,  builtIn: false, legacy: true },
 ];
 // This corrects stale data from older app versions that saved wrong flags.
 const FORCED_INCOME_IDS = new Set([
-  "W2 Payroll", "Side Income", "Transfer Received", "Interest/Dividends", "Income"
+  "W2 Payroll", "Side Income", "Interest/Dividends", "Income", "Credit Card Reward"
 ]);
 const FORCED_EXCLUDED_IDS = new Set([
   "W2 Payroll", "Side Income", "Transfer Received", "Interest/Dividends", "Income",
-  "Investments", "Savings Transfer", "CC Payment"
+  "Investments", "Savings Transfer", "CC Payment", "Credit Card Reward"
 ]);
 
 export function saveCategories(cats) {

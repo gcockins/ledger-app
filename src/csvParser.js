@@ -94,10 +94,21 @@ function parseDiscover(headers, cols) {
   return { desc, dateStr, amount };
 }
 
-function parseWellsFargo(cols) {
+function parseWellsFargo(cols, accountLabel) {
   const dateStr = (cols[0] || '').replace(/"/g, '').trim();
-  const amount  = parseMoney(cols[1]);
+  const rawAmt  = parseMoney(cols[1]);
   const desc    = (cols[4] || cols[2] || '').replace(/"/g, '').trim();
+
+  // Wells Fargo CHECKING: amounts are already signed (negative=debit, positive=credit)
+  // Wells Fargo CREDIT CARD: charges are POSITIVE, payments are NEGATIVE — must flip
+  // Detect credit card by account label OR by the presence of "credit" in the label
+  const label = (accountLabel || '').toLowerCase();
+  const isCreditCard = label.includes('credit') || label.includes('credit card') || label.includes('cc');
+
+  const amount = isCreditCard
+    ? (rawAmt > 0 ? -rawAmt : Math.abs(rawAmt))   // flip: charge→negative, payment→positive
+    : rawAmt;                                        // checking: already correct sign
+
   return { desc, dateStr, amount };
 }
 
@@ -173,7 +184,7 @@ const MERCHANT_MAP = {
   'thrivemarke':             'Food',
   'p.f. chang':              'Food',
   'pf chang':                'Food',
-  'wm supercenter':          'Food',
+  'wm supercenter':          'Shopping',
   'longhorn stk':            'Food',
   'da andrea':               'Food',
   'chick-fil-a':             'Food',
@@ -222,19 +233,403 @@ const MERCHANT_MAP = {
   'thegardenfellowship':     'Giving',
   "nbs*king's":              'Giving',
   '99pledg':                 'Giving',
+  // Credit Card Reward (income — excluded from budget)
+  'deposit from discover':   'Credit Card Reward',
+  'discover cash award':     'Credit Card Reward',
+  'wells fargo rewards':     'Credit Card Reward',
+  'cash rewards':            'Credit Card Reward',
+  'rewards redemption':      'Credit Card Reward',
+
+  // Subscription
+  'google *google one':      'Subscription',
+  'google one':              'Subscription',
+  'apple.com/bill':          'Subscription',
+  'amazon prime':            'Subscription',
+  'spotify':                 'Subscription',
+  'hulu':                    'Subscription',
+  'disney':                  'Subscription',
+  'netflix':                 'Subscription',
+  'hbo':                     'Subscription',
+  'peacock':                 'Subscription',
+  'annual membership fee':   'Subscription',
+  'monthly service fee':     'Subscription',
+
+  // Utilities (recurring)
+  'socalgaS':                'Utilities',
+  'soCalgas paid scgc':      'Utilities',
+  'scgc':                    'Utilities',
+  'so cal edison':           'Utilities',
+  'coachella valley bi':     'Utilities',
+  'coachella valley water':  'Utilities',
+  'coachella valley billpay':'Utilities',
+
+  // Insurance (recurring)
+  'drive ins co ins':        'Insurance',
+  'applecard gsbank':        'Insurance',
+
+  // Education (recurring)
+  'scholarshare':            'Education',
+  'kings school of':         'Education',
+  'zelle money sent to kings': 'Education',
+
+  // Phone/Internet
+  'spectrum mobile':         'Phone/Internet',
+  'verizon payment':         'Phone/Internet',
+
+  // Transport
+  'vons fuel':               'Transport',
+  'costco gas':              'Transport',
+
+  // Food — new merchants
+  'wholefds':                'Food',
+  'whole foods':             'Food',
+  'trader joe':              'Food',
+  'vons ':                   'Food',
+  'sprouts':                 'Food',
+  'girl scouts of':          'Food',
+  'alkobar quick stop':      'Food',
+  'castanedas mexican':      'Food',
+  'vienna donut':            'Food',
+  'firehouse subs':          'Food',
+  'iw coffee':               'Food',
+
+  // Coffee / Tea — new
+  'koffi':                   'Coffee / Tea',
+  'starbucks':               'Coffee / Tea',
+  'paypal *starbucks':       'Coffee / Tea',
+
+  // Shopping — new
+  'dollartree':              'Shopping',
+  'dollar tree':             'Shopping',
+  'klarna vans':             'Shopping',
+  'sp merit beauty':         'Shopping',
+  'sp+aff casely':           'Shopping',
+  'sp+aff jones road':       'Shopping',
+  'sq *rileys':              'Shopping',
+  'home depot':              'Shopping',
+  'samsung':                 'Shopping',
+  'aim mail center':         'Shopping',
+
+  // Giving — Zelle to known people/orgs
+  'zelle money sent to kings school': 'Giving',
+
   // CC Payment
   'payment thank you':       'CC Payment',
   'returned payment':        'CC Payment',
   'automatic payment':       'CC Payment',
   'target card srvc':        'CC Payment',
   'target card payment':     'CC Payment',
-  'target card services':    'CC Payment',
   'discover e-payment':      'CC Payment',
   'wf credit card':          'CC Payment',
   'chase credit card':       'CC Payment',
   'citi autopay':            'CC Payment',
+  'purchase interest charge':'CC Payment',
+  'purch interest debit':    'CC Payment',
+
+  // Transfer
+  'deposit from 360':        'Transfer Received',
+  'deposit from discover':   'Credit Card Reward',
+
+  // Fitness / Healthcare
+  'fit in 42':               'Healthcare',
+
   // Side Income
   'atm cash deposit':        'Side Income',
+
+  // ── MERCHANT DIRECTORY (from Merchant_Directory spreadsheet) ─────────────────
+  // NOTE: More-specific keys must come before shorter/broader ones.
+  // E.g. 'costco gas' before 'costco', 'amazon prime' before 'amazon'.
+
+  // Coffee / Tea (pulled out of Food — these are beverage-only shops)
+  'starbucks':               'Coffee / Tea',
+  'dutch bros coffee':       'Coffee / Tea',
+  'peets coffee':            'Coffee / Tea',
+  'philz coffee':            'Coffee / Tea',
+  'the coffee bean':         'Coffee / Tea',
+  'coffee bean':             'Coffee / Tea',
+  'paypal *starbucks':       'Coffee / Tea',
+
+  // Food — Groceries
+  '99 ranch':                'Food',
+  'albertsons':              'Food',
+  'blaze pizza':             'Food',
+  'boudin bakery':           'Food',
+  'bristol farms':           'Food',
+  'burger king':             'Food',
+  'carls jr':                'Food',
+  'carl\'s jr':              'Food',
+  'chick fil':               'Food',
+  'chipotle':                'Food',
+  'del taco':                'Food',
+  'dunkin':                  'Food',
+  'el super':                'Food',
+  'five guys':               'Food',
+  'food4less':               'Food',
+  'gelsons':                 'Food',
+  'grocery outlet':          'Food',
+  'in-n-out':                'Food',
+  'in n out':                'Food',
+  'jack in the':             'Food',
+  'jamba juice':             'Food',
+  'marukai':                 'Food',
+  'mcdonalds':               'Food',
+  'mcdonald\'s':             'Food',
+  'mitsuwa':                 'Food',
+  'new leaf community':      'Food',
+  'nob hill foods':          'Food',
+  'northgate market':        'Food',
+  'panda express':           'Food',
+  'panera bread':            'Food',
+  'panera':                  'Food',
+  'pavilions':               'Food',
+  'pieology':                'Food',
+  'pressed juicery':         'Food',
+  'ralphs':                  'Food',
+  'raleys':                  'Food',
+  'raley\'s':                'Food',
+  'round table pizza':       'Food',
+  'safeway':                 'Food',
+  'save mart':               'Food',
+  'sees candies':            'Food',
+  'see\'s candies':          'Food',
+  'shake shack':             'Food',
+  'smart and final':         'Food',
+  'smart & final':           'Food',
+  'sprouts farmers':         'Food',
+  'stater bros':             'Food',
+  'stater brother':          'Food',
+  'subway':                  'Food',
+  'superior grocers':        'Food',
+  'taco bell':               'Food',
+  'the habit':               'Food',
+  'habit burger':            'Food',
+  'tokyo central':           'Food',
+  'trader joe':              'Food',
+  'vallarta':                'Food',
+  'vons':                    'Food',
+  'wendys':                  'Food',
+  'wendy\'s':                'Food',
+  'winco foods':             'Food',
+  'winco':                   'Food',
+  'whole foods':             'Food',
+  'wholefds':                'Food',
+
+  // Transport — fuel (specific before general)
+  'costco gas':              'Transport',
+  'vons fuel':               'Transport',
+  'arco':                    'Transport',
+  'chevron':                 'Transport',
+  'shell':                   'Transport',
+  'exxon':                   'Transport',
+  'mobil':                   'Transport',
+  'valero':                  'Transport',
+  'fastrak':                 'Transport',
+  'fas trak':                'Transport',
+  'tesla supercharging':     'Transport',
+  'supercharger':            'Transport',
+  'chargepoint':             'Transport',
+  'evgo':                    'Transport',
+  'electrify america':       'Transport',
+  'jiffy lube':              'Transport',
+  'pep boys':                'Transport',
+  'firestone':               'Transport',
+  'oreilly auto':            'Transport',
+  "o'reilly auto":           'Transport',
+  'autozone':                'Transport',
+  'uber':                    'Transport',
+  'lyft':                    'Transport',
+  'metrolink':               'Transport',
+  'la metro':                'Transport',
+  'amtrak':                  'Transport',
+  'hertz':                   'Transport',
+  'enterprise rent':         'Transport',
+  'avis':                    'Transport',
+  'turo':                    'Transport',
+  'waymo':                   'Transport',
+  'aaa auto':                'Transport',
+  'aaa insurance':           'Transport',
+
+  // Shopping — specific before broad
+  'amazon prime':            'Subscription',  // must be before 'amazon'
+  'amazon':                  'Shopping',
+  'target':                  'Shopping',
+  'walmart':                 'Shopping',
+  'wal-mart':                'Shopping',
+  'wm supercenter':          'Shopping',
+  'walmart.com':             'Shopping',
+  'costco':                  'Shopping',      // after 'costco gas'
+  'sams club':               'Shopping',
+  "sam's club":              'Shopping',
+  'best buy':                'Shopping',
+  'ebay':                    'Shopping',
+  'nordstrom rack':          'Shopping',      // before 'nordstrom'
+  'nordstrom':               'Shopping',
+  'macys':                   'Shopping',
+  "macy's":                  'Shopping',
+  'kohls':                   'Shopping',
+  "kohl's":                  'Shopping',
+  'old navy':                'Shopping',
+  'banana republic':         'Shopping',
+  'levis':                   'Shopping',
+  "levi's":                  'Shopping',
+  'patagonia':               'Shopping',
+  'rei':                     'Shopping',
+  'dicks sporting':          'Shopping',
+  "dick's sporting":         'Shopping',
+  'big 5 sporting':          'Shopping',
+  'lululemon':               'Shopping',
+  'sephora':                 'Shopping',
+  'ulta':                    'Shopping',
+  'bath and body':           'Shopping',
+  'bath & body':             'Shopping',
+  'williams sonoma':         'Shopping',
+  'williams-sonoma':         'Shopping',
+  'pottery barn':            'Shopping',
+  'ikea':                    'Shopping',
+  'bed bath':                'Shopping',
+  'homegoods':               'Shopping',
+  'tj maxx':                 'Shopping',
+  'marshalls':               'Shopping',
+  'ross dress':              'Shopping',
+  'burlington':              'Shopping',
+  'stockx':                  'Shopping',
+  // Pets → Shopping (no dedicated pets category)
+  'chewy':                   'Shopping',
+  'petco':                   'Shopping',
+  'petsmart':                'Shopping',
+  'petsupplies':             'Shopping',
+  'petsupplies plus':        'Shopping',
+  'barkbox':                 'Shopping',
+  'rover.com':               'Shopping',
+  'rovercom':                'Shopping',
+  'wag!':                    'Shopping',
+  'banfield':                'Shopping',
+  'vca animal':              'Shopping',
+  'petmed':                  'Shopping',
+
+  // Healthcare
+  'kaiser permanente':       'Healthcare',
+  'kaiser':                  'Healthcare',
+  'sutter health':           'Healthcare',
+  'cedars sinai':            'Healthcare',
+  'cedars-sinai':            'Healthcare',
+  'ucla health':             'Healthcare',
+  'eisenhower health':       'Healthcare',
+  'desert regional':         'Healthcare',
+  'cvs pharmacy':            'Healthcare',
+  'cvs':                     'Healthcare',
+  'walgreens':               'Healthcare',
+  'rite aid':                'Healthcare',
+  'labcorp':                 'Healthcare',
+  'quest diagnostics':       'Healthcare',
+  'optum':                   'Healthcare',
+  'blue shield':             'Healthcare',
+  'delta dental':            'Healthcare',
+  'vsp vision':              'Healthcare',
+  'goodrx':                  'Healthcare',
+  'planned parenthood':      'Healthcare',
+  'carbon health':           'Healthcare',
+  'one medical':             'Healthcare',
+  'city of hope':            'Healthcare',
+
+  // Utilities
+  'southern california edison': 'Utilities',
+  'so cal edison':           'Utilities',
+  'sce':                     'Utilities',
+  'pg&e':                    'Utilities',
+  'pge':                     'Utilities',
+  'sdg&e':                   'Utilities',
+  'sdge':                    'Utilities',
+  'socalgas':                'Utilities',
+  'soCalgas':                'Utilities',
+  'iid imperial':            'Utilities',
+  'spectrum':                'Utilities',
+  'cox':                     'Utilities',
+  'xfinity':                 'Utilities',
+  'frontier':                'Utilities',
+  'at&t':                    'Utilities',
+  'att ':                    'Utilities',
+  'cricket wireless':        'Utilities',
+  'mint mobile':             'Utilities',
+  'burrtec':                 'Utilities',
+  'waste management':        'Utilities',
+  'republic services':       'Utilities',
+  'desert water agency':     'Utilities',
+  'cvwd':                    'Utilities',
+  'coachella valley water':  'Utilities',
+  'ladwp':                   'Utilities',
+  'smud':                    'Utilities',
+
+  // Subscriptions (digital)
+  'netflix':                 'Subscription',
+  'disney+':                 'Subscription',
+  'disney plus':             'Subscription',
+  'disneyplus':              'Subscription',
+  'hulu':                    'Subscription',
+  'hbo max':                 'Subscription',
+  'hbo':                     'Subscription',
+  'paramount+':              'Subscription',
+  'paramount plus':          'Subscription',
+  'apple.com/bill':          'Subscription',
+  'apple services':          'Subscription',
+  'spotify':                 'Subscription',
+  'youtube premium':         'Subscription',
+  'nintendo':                'Subscription',
+  'playstation':             'Subscription',
+  'xbox game':               'Subscription',
+  'adobe':                   'Subscription',
+  'microsoft 365':           'Subscription',
+  'microsoft':               'Subscription',
+  'canva':                   'Subscription',
+  'slack':                   'Subscription',
+  'zoom':                    'Subscription',
+  'dropbox':                 'Subscription',
+  'patreon':                 'Subscription',
+  'nytimes':                 'Subscription',
+  'ny times':                'Subscription',
+  'wall street journal':     'Subscription',
+  'wsj':                     'Subscription',
+  'google *google one':      'Subscription',
+  'google one':              'Subscription',
+
+  // Education
+  'abcmouse':                'Education',
+  'boys and girls':          'Education',
+  'boys & girls':            'Education',
+  'bright horizons':         'Education',
+  'care.com':                'Education',
+  'gymboree':                'Education',
+  'khan academy':            'Education',
+  'kindercare':              'Education',
+  'kumon':                   'Education',
+  'little league':           'Education',
+  'outschool':               'Education',
+  'psusd':                   'Education',
+  'scholastic':              'Education',
+  'sylvan learning':         'Education',
+  'varsity tutors':          'Education',
+  'ymca':                    'Education',
+
+  // Housing / Home Maintenance
+  'home depot':              'Housing',
+  'lowes':                   'Housing',
+  "lowe's":                  'Housing',
+  'ace hardware':            'Housing',
+  'true value':              'Housing',
+  'sherwin williams':        'Housing',
+  'sherwin-williams':        'Housing',
+  'benjamin moore':          'Housing',
+  'orkin':                   'Housing',
+  'terminix':                'Housing',
+  'culligan':                'Housing',
+  'stanley steemer':         'Housing',
+  'merry maids':             'Housing',
+  'taskrabbit':              'Housing',
+  'angi':                    'Housing',
+  'houzz':                   'Housing',
+  'ring':                    'Housing',
+  'adt':                     'Housing',
+  'vivint':                  'Housing',
 };
 
 // ─── CATEGORIZER ─────────────────────────────────────────────────────────────
@@ -441,7 +836,7 @@ export function parseCSV(text, accountLabel) {
         case 'chase':       parsed = parseChase(headers, cols); break;
         case 'citi':        parsed = parseCiti(headers, cols); break;
         case 'discover':    parsed = parseDiscover(headers, cols); break;
-        case 'Wells Fargo': parsed = parseWellsFargo(cols); break;
+        case 'Wells Fargo': parsed = parseWellsFargo(cols, accountLabel); break;
         default:            parsed = parseGeneric(headers, cols); break;
       }
 
